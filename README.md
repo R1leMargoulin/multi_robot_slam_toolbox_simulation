@@ -1,11 +1,11 @@
-# slam_toolbox_multi_robot_demo
+# multi_robot_slam_toolbox_simulation
 
 **multi-robot SLAM demo** for ROS 2 using `slam_toolbox`.
 Based on [acachathuranga/slam_toolbox_multi_robot_demo](https://github.com/acachathuranga/slam_toolbox_multi_robot_demo), adapted here for a shared single-Gazebo-instance setup on ROS 2 Jazzy.
 
 Launch 2 TurtleBot3 robots in a single shared Gazebo (gz sim) instance, each with a namespaced `slam_toolbox` instance and a shared **global odometry** frame (`global_odom → map`).
 
-Map merging across robots is **not** handled in this package — see `map_merge_server` for that.
+Map merging across robots is **not** handled in this version of the package — see `map_merge_server` for that.
 
 ---
 
