@@ -13,10 +13,10 @@ Map merging across robots is **not** handled in this version of the package — 
 
 ## Features
 
-- Single-robot or **multi-robot** bringup (2 robots) with per-robot namespaces.
-- Single shared Gazebo world and single shared simulation clock for all robots (a per-robot Gazebo/clock setup caused clock desync and TF conflicts between robots).
+- **multi-robot** bringup with per-robot namespaces.
+- Single shared Gazebo world and single shared simulation clock for all robots
 - Starts `slam_toolbox` (standard, per-robot instance) per robot. The decentralized multi-robot variant isn't shipped with this ROS distro, so this demo copies and adapts the closest available launch to reach an equivalent per-robot setup.
-- Publishes **static TF** per robot: `global_odom → map` (not `→ odom`), so each robot's own live `map → odom` correction from `slam_toolbox` stays the only source of truth for that link.
+- Publishes **static TF** per robot: `global_odom → map`.
 - Optional RViz per robot with a default config.
 
 ---
