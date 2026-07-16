@@ -21,7 +21,7 @@ import tempfile
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (AppendEnvironmentVariable, DeclareLaunchArgument, ExecuteProcess,
-                            ForEach, GroupAction, IncludeLaunchDescription, LogInfo,
+                            GroupAction, IncludeLaunchDescription, LogInfo,
                             OpaqueFunction, RegisterEventHandler)
 from launch.conditions import IfCondition
 from launch.event_handlers import OnShutdown
@@ -32,25 +32,7 @@ from launch_ros.actions import Node
 import yaml
 
 
-def count_robots(context: LaunchContext) -> list[LogInfo]:
-    """Count the number of robots from the 'robots' launch argument."""
-    robots_str = LaunchConfiguration('robots').perform(context).strip()
-    log_msg = ''
-
-    if not robots_str:
-        log_msg = 'No robots provided in the launch argument.'
-
-    try:
-        robots_list = [yaml.safe_load(robot.strip()) for robot in
-                       robots_str.split(';') if robot.strip()]
-        log_msg = f'number_of_robots={len(robots_list)}'
-    except yaml.YAMLError as e:
-        log_msg = f'Error parsing the robots launch argument: {e}'
-
-    return [LogInfo(msg=[log_msg])]
-
-
-def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> list[GroupAction]:
+def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> GroupAction:
     """Generate the actions to launch a robot with the given name and pose."""
     bringup_dir = get_package_share_directory('slam_toolbox_multi_robot_demo')
     launch_dir = os.path.join(bringup_dir, 'launch')
@@ -58,7 +40,10 @@ def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> list[
     rviz_config_file = LaunchConfiguration('rviz_config')
     use_robot_state_pub = LaunchConfiguration('use_robot_state_pub')
 
-    # Define commands for launching the navigation instances
+    # Define commands for launching the navigation instances.
+    # NOTE: tb3_simulation_launch.py only spawns this robot into the
+    # already-running (shared) Gazebo world started below by this parent
+    # launch file. It does NOT start its own Gazebo server/world.
     group = GroupAction(
             [
                 LogInfo(
@@ -82,8 +67,6 @@ def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> list[
                         'namespace': name,
                         'use_sim_time': 'True',
                         'use_rviz': 'False',
-                        'use_simulator': 'False',
-                        'headless': 'False',
                         'use_robot_state_pub': use_robot_state_pub,
                         'x_pose': TextSubstitution(text=str(pose.get('x', 0.0))),
                         'y_pose': TextSubstitution(text=str(pose.get('y', 0.0))),
@@ -95,10 +78,14 @@ def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> list[
                     }.items(),
                 ),
                 # Start global_odom to robot odom TF publisher
+                # Static anchor: global_odom -> map (NOT -> odom).
+                #   global_odom -> map (static, known at spawn)
+                #        -> odom (live, drift-corrected by slam_toolbox)
+                #        -> base_footprint 
                 Node(
                     package='tf2_ros',
                     executable='static_transform_publisher',
-                    name='odom_tf_broadcaster',
+                    name='global_map_tf_broadcaster',
                     namespace=TextSubstitution(text=name),
                     remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
                     parameters=[{'use_sim_time': True}],
@@ -110,12 +97,45 @@ def generate_robot_actions(name: str = '', pose: dict[str, float] = {}) -> list[
                         '--pitch', str(pose.get('pitch', 0.0)),
                         '--yaw', str(pose.get('yaw', 0.0)),
                         '--frame-id', 'global_odom',
-                        '--child-frame-id', 'odom'
+                        '--child-frame-id', 'map'
                     ]
                 )
             ]
         )
-    return [group]
+    return group
+
+
+def launch_robots(context: LaunchContext, *args, **kwargs) -> list:
+    """
+    Parse the 'robots' launch argument and build one GroupAction per robot.
+
+    (ForEach not available on ROS 2 Humble/Jazzy)
+    """
+    robots_str = LaunchConfiguration('robots').perform(context).strip()
+    log_settings = LaunchConfiguration('log_settings').perform(context)
+
+    actions = []
+
+    if not robots_str:
+        actions.append(LogInfo(msg=['No robots provided in the robots launch argument.']))
+        return actions
+
+    try:
+        robots_list = [yaml.safe_load(robot.strip()) for robot in
+                       robots_str.split(';') if robot.strip()]
+    except yaml.YAMLError as e:
+        actions.append(LogInfo(msg=[f'Error parsing the robots launch argument: {e}']))
+        return actions
+
+    if log_settings.lower() == 'true':
+        actions.append(LogInfo(msg=[f'number_of_robots={len(robots_list)}']))
+
+    for robot in robots_list:
+        name = robot.get('name', '')
+        pose = robot.get('pose', {})
+        actions.append(generate_robot_actions(name=name, pose=pose))
+
+    return actions
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -123,14 +143,8 @@ def generate_launch_description() -> LaunchDescription:
     Bring up the multi-robots with given launch arguments.
 
     Launch arguments consist of robot name(which is namespace) and pose for initialization.
-    Keep general yaml format for pose information.
-
     ex) robots:='{name: 'robot1', pose: {x: 1.0, y: 1.0, yaw: 1.5707}};
                  {name: 'robot2', pose: {x: 1.0, y: 1.0, yaw: 1.5707}}'
-    ex) robots:='{name: 'robot3', pose: {x: 1.0, y: 1.0, z: 1.0,
-                                    roll: 0.0, pitch: 1.5707, yaw: 1.5707}};
-                 {name: 'robot4', pose: {x: 1.0, y: 1.0, z: 1.0,
-                                    roll: 0.0, pitch: 1.5707, yaw: 1.5707}}'
     """
     # Get the launch directory
     bringup_dir = get_package_share_directory('slam_toolbox_multi_robot_demo')
@@ -139,11 +153,12 @@ def generate_launch_description() -> LaunchDescription:
     # Simulation settings
     world = LaunchConfiguration('world')
     headless = LaunchConfiguration('headless')
+    use_simulator = LaunchConfiguration('use_simulator')
 
     # On this example all robots are launched with the same settings
     rviz_config_file = LaunchConfiguration('rviz_config')
     use_robot_state_pub = LaunchConfiguration('use_robot_state_pub')
-    log_settings = LaunchConfiguration('log_settings', default='true')
+    log_settings = LaunchConfiguration('log_settings')
 
     # Declare the launch arguments
     declare_world_cmd = DeclareLaunchArgument(
@@ -165,6 +180,12 @@ def generate_launch_description() -> LaunchDescription:
         'headless', default_value='False', description='Whether to execute gzclient)'
     )
 
+    declare_use_simulator_cmd = DeclareLaunchArgument(
+        'use_simulator',
+        default_value='True',
+        description='Whether to start the simulator',
+    )
+
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
         'rviz_config',
         default_value=os.path.join(
@@ -182,13 +203,19 @@ def generate_launch_description() -> LaunchDescription:
         'use_rviz', default_value='True', description='Whether to start RVIZ'
     )
 
-    # Start Gazebo with plugin providing the robot spawning service
+    declare_log_settings_cmd = DeclareLaunchArgument(
+        'log_settings', default_value='true', description='Whether to log settings'
+    )
+
+    # Start Gazebo with a single shared world. All robots are spawned
+    # into this same instance from generate_robot_actions() above.
     world_sdf = tempfile.mktemp(prefix='nav2_', suffix='.sdf')
     world_sdf_xacro = ExecuteProcess(
-        cmd=['xacro', '-o', world_sdf, ['headless:=', 'False'], world])
+        cmd=['xacro', '-o', world_sdf, ['headless:=', headless], world])
     start_gazebo_cmd = ExecuteProcess(
         cmd=['gz', 'sim', '-r', '-s', world_sdf],
         output='screen',
+        condition=IfCondition(use_simulator),
     )
 
     start_gazebo_client = IncludeLaunchDescription(
@@ -198,7 +225,7 @@ def generate_launch_description() -> LaunchDescription:
                          'gz_sim.launch.py')
         ),
         condition=IfCondition(PythonExpression(
-            [' not ', headless])),
+            [use_simulator, ' and not ', headless])),
         launch_arguments={'gz_args': ['-v4 -g ']}.items(),
     )
 
@@ -206,6 +233,15 @@ def generate_launch_description() -> LaunchDescription:
         on_shutdown=[
             OpaqueFunction(function=lambda _: os.remove(world_sdf))
         ]))
+
+    # Bridge /clock, globally
+    start_clock_bridge_cmd = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='clock_bridge',
+        output='screen',
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+    )
 
     set_env_vars_resources = AppendEnvironmentVariable(
         'GZ_SIM_RESOURCE_PATH', os.path.join(sim_dir, 'models'))
@@ -225,12 +261,15 @@ def generate_launch_description() -> LaunchDescription:
     ld.add_action(declare_rviz_config_file_cmd)
     ld.add_action(declare_use_robot_state_pub_cmd)
     ld.add_action(declare_simulator_cmd)
+    ld.add_action(declare_use_simulator_cmd)
+    ld.add_action(declare_log_settings_cmd)
 
-    # Add the actions to start gazebo, robots and simulations
+    # Add the actions to start gazebo (once, shared) then the robots
     ld.add_action(world_sdf_xacro)
     ld.add_action(start_gazebo_cmd)
     ld.add_action(start_gazebo_client)
     ld.add_action(remove_temp_sdf_file)
+    ld.add_action(start_clock_bridge_cmd)
 
     ld.add_action(
         LogInfo(
@@ -245,7 +284,6 @@ def generate_launch_description() -> LaunchDescription:
         )
     )
 
-    ld.add_action(OpaqueFunction(function=count_robots))
-    ld.add_action(ForEach(LaunchConfiguration('robots'), function=generate_robot_actions))
+    ld.add_action(OpaqueFunction(function=launch_robots))
 
     return ld

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>slam_toolbox_multi_robot_demo</name>
+  <name>multi_robot_slam_toolbox_simulation</name>
   <version>0.0.0</version>
   <description>Demo scripts for Multi-Robot SLAM</description>
   <maintainer email="chhathuranga@gmail.com">Achala Athukorala</maintainer>
