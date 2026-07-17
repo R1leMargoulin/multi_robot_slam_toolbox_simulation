@@ -147,7 +147,7 @@ def generate_launch_description() -> LaunchDescription:
                  {name: 'robot2', pose: {x: 1.0, y: 1.0, yaw: 1.5707}}'
     """
     # Get the launch directory
-    bringup_dir = get_package_share_directory('slam_toolbox_multi_robot_demo')
+    bringup_dir = get_package_share_directory('multi_robot_slam_toolbox_simulation')
     sim_dir = get_package_share_directory('nav2_minimal_tb3_sim')
 
     # Simulation settings
